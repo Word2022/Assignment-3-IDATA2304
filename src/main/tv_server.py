@@ -13,8 +13,8 @@ class TVServer:
   def __init__(self, tv, port=DEFAULT_PORT):
     self.tv = tv
     self.port = port
-    self._lock = threading.Lock()
-    self._remotes = set()
+    self.lock = threading.Lock()
+    self.remotes = set()
 
   def serve_forever(self):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -27,52 +27,53 @@ class TVServer:
       while True:
         conn, addr = server.accept()
         threading.Thread(
-            target=self._serve_client, args=(conn, addr), daemon=True,
+          target=self._serve_client, args=(conn, addr), daemon=True,
         ).start()
     except KeyboardInterrupt:
       print("Shutting down")
     finally:
       server.close()
 
+  def notify_others(self, sender, before, after):
+    events = []
+    if before[0] != after[0]:
+      events.append("EVENT POWER " + ("ON" if after[0] else "OFF"))
+    if before[1] != after[1]:
+      events.append(f"EVENT CHANNEL {after[1]}")
+
+    for event in events:
+      for remote in list(self.remotes):
+        if remote is sender:
+          continue
+        try:
+          remote.write(event + "\n")
+          remote.flush()
+        except (OSError, ValueError):
+          pass   # that remote is gone; its own thread cleans up
+
   def _serve_client(self, conn, addr):
     print(f"Remote connected from {addr}")
     try:
       with conn, conn.makefile("rw", encoding="utf-8", newline="\n") as f:
-        with self._lock:
-          self._remotes.add(f)           # register this remote
+        with self.lock:
+          self.remotes.add(f)           # register this remote
         try:
           for line in f:
-            with self._lock:
+            with self.lock:
               before = (self.tv.is_on, self.tv.channel)
               reply = self.tv.handle_command(line)
               after = (self.tv.is_on, self.tv.channel)
               f.write(reply + "\n")
               f.flush()
-              self._notify_others(f, before, after)
+              self.notify_others(f, before, after)
             print(f"  {addr}: {line.strip()!r} -> {reply!r}")
         finally:
-          with self._lock:
-            self._remotes.discard(f)   # unregister on disconnect
+          with self.lock:
+            self.remotes.discard(f)   # unregister on disconnect
     except (ConnectionResetError, BrokenPipeError):
       pass
+
     print(f"Remote {addr} disconnected")
-
-    def _notify_others(self, sender, before, after):
-      events = []
-      if before[0] != after[0]:
-        events.append("EVENT POWER " + ("ON" if after[0] else "OFF"))
-      if before[1] != after[1]:
-        events.append(f"EVENT CHANNEL {after[1]}")
-
-      for event in events:
-        for remote in list(self._remotes):
-          if remote is sender:
-            continue
-          try:
-            remote.write(event + "\n")
-            remote.flush()
-          except (OSError, ValueError):
-            pass   # that remote is gone; its own thread cleans up
 
 
 def show_event(message):

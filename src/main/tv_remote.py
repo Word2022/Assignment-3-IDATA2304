@@ -12,21 +12,21 @@ class RemoteControl:
     self.host = host
     self.port = port
     self.on_event = on_event or (lambda message : None)
-    self._reader
-    self._sock = None
-    self._file = None
+    self.reader = None
+    self.sock = None
+    self.writer = None
     self.replies = queue.Queue()
 
   def connect(self):
-    self._sock = socket.create_connection((self.host, self.port), timeout=5)
-    self._sock.settimeout(None)
-    self._file = self._sock.makefile("rw", encoding="utf-8", newline="\n")
-    self._reader = self._sock.makefile("rw", encoding="utf-8", newline="\n")
-    threading.Thread(target=self._read_loop, daemon=True).start()
+    self.sock = socket.create_connection((self.host, self.port), timeout=5)
+    self.sock.settimeout(None)
+    self.writer = self.sock.makefile("rw", encoding="utf-8", newline="\n")
+    self.reader = self.sock.makefile("rw", encoding="utf-8", newline="\n")
+    threading.Thread(target=self.read_loop, daemon=True).start()
 
   def read_loop(self):
     try:
-      for line in self._reader:
+      for line in self.reader:
         line = line.strip()
         if line.startswith("EVENT "):
           self.on_event(line[len("EVENT "):])
@@ -34,25 +34,25 @@ class RemoteControl:
           self.replies.put(line)
     except(OSError,ValueError):
       pass
-    self._replies.put(None)
+    self.replies.put(None)
 
   def send(self, command):
     """Send one command and return the reply, or None if the
     connection was lost."""
     try:
-      self._file.write(command + "\n")
-      self._file.flush()
-      reply = self._file.readline()
+      self.writer.write(command + "\n")
+      self.writer.flush()
+      reply = self.writer.readline()
     except (OSError,ValueError):
       return None
-    return self._replies.get()
+    return self.replies.get()
 
   def close(self):
     try:
-      self._sock.shutdown(socket.SHUT_RDWR)   # wakes the reader thread
+      self.sock.shutdown(socket.SHUT_RDWR)   # wakes the reader thread
     except (OSError, AttributeError):
       pass
-    for item in (self._writer, self._reader, self._sock):
+    for item in (self.writer, self.reader, self.sock):
       if item:
         item.close()
 
