@@ -29,27 +29,30 @@ class RemoteControl:
       for line in self.reader:
         line = line.strip()
         if line.startswith("EVENT "):
-          self.on_event(line[len("EVENT "):])
+          try:
+            self.on_event(line[len("EVENT "):])
+          except Exception as e:                  # new
+            print(f"Event handler error: {e!r}")
         else:
           self.replies.put(line)
-    except(OSError,ValueError):
+    except (OSError, ValueError):
       pass
     self.replies.put(None)
 
-  def send(self, command):
-    """Send one command and return the reply, or None if the
-    connection was lost."""
+  def send(self, command,):
     try:
       self.writer.write(command + "\n")
       self.writer.flush()
-      reply = self.writer.readline()
-    except (OSError,ValueError):
+    except (OSError, ValueError):
       return None
-    return self.replies.get()
+    try:
+      return self.replies.get(timeout=5)
+    except queue.Empty:
+      return "ERROR no reply from server"
 
   def close(self):
     try:
-      self.sock.shutdown(socket.SHUT_RDWR)   # wakes the reader thread
+      self.sock.shutdown(socket.SHUT_RDWR)
     except (OSError, AttributeError):
       pass
     for item in (self.writer, self.reader, self.sock):
