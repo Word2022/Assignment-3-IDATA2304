@@ -8,7 +8,7 @@ import threading
 import queue
 
 class RemoteControl:
-  def __init__(self, host, port):
+  def __init__(self, host, port, on_event=None):
     self.host = host
     self.port = port
     self.on_event = on_event or (lambda message : None)
