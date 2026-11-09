@@ -4,18 +4,37 @@ Example: python tv_remote.py 192.168.67.12 1238
 """
 import socket
 import sys
+import threading
+import queue
 
 class RemoteControl:
   def __init__(self, host, port):
     self.host = host
     self.port = port
+    self.on_event = on_event or (lambda message : None)
+    self._reader
     self._sock = None
     self._file = None
+    self.replies = queue.Queue()
 
   def connect(self):
     self._sock = socket.create_connection((self.host, self.port), timeout=5)
     self._sock.settimeout(None)
     self._file = self._sock.makefile("rw", encoding="utf-8", newline="\n")
+    self._reader = self._sock.makefile("rw", encoding="utf-8", newline="\n")
+    threading.Thread(target=self._read_loop, daemon=True).start()
+
+  def read_loop(self):
+    try:
+      for line in self._reader:
+        line = line.strip()
+        if line.startswith("EVENT "):
+          self.on_event(line[len("EVENT "):])
+        else:
+          self.replies.put(line)
+    except(OSError,ValueError):
+      pass
+    self._replies.put(None)
 
   def send(self, command):
     """Send one command and return the reply, or None if the
@@ -24,15 +43,18 @@ class RemoteControl:
       self._file.write(command + "\n")
       self._file.flush()
       reply = self._file.readline()
-    except (ConnectionResetError, BrokenPipeError):
+    except (OSError,ValueError):
       return None
-    return reply.strip() if reply else None
+    return self._replies.get()
 
   def close(self):
-    if self._file:
-      self._file.close()
-    if self._sock:
-      self._sock.close()
+    try:
+      self._sock.shutdown(socket.SHUT_RDWR)   # wakes the reader thread
+    except (OSError, AttributeError):
+      pass
+    for item in (self._writer, self._reader, self._sock):
+      if item:
+        item.close()
 
   def run(self):
     print(f"Connected to TV at {self.host}:{self.port}. Type QUIT to exit.")

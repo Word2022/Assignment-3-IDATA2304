@@ -1,7 +1,7 @@
 
 import socket
 import sys
-
+import threading
 
 from tv_logic import SmartTV
 
@@ -13,6 +13,8 @@ class TVServer:
   def __init__(self, tv, port=DEFAULT_PORT):
     self.tv = tv
     self.port = port
+    self._lock = threading.Lock()
+    self._remotes = set()
 
   def serve_forever(self):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -24,7 +26,9 @@ class TVServer:
     try:
       while True:
         conn, addr = server.accept()
-        self._serve_client(conn, addr)  # one remote at a time
+        threading.Thread(
+            target=self._serve_client, args=(conn, addr), daemon=True,
+        ).start()
     except KeyboardInterrupt:
       print("Shutting down")
     finally:
@@ -34,15 +38,46 @@ class TVServer:
     print(f"Remote connected from {addr}")
     try:
       with conn, conn.makefile("rw", encoding="utf-8", newline="\n") as f:
-        for line in f:  # loop ends when the client disconnects
-          reply = self.tv.handle_command(line)
-          print(f"  {line.strip()!r} -> {reply!r}")
-          f.write(reply + "\n")
-          f.flush()
+        with self._lock:
+          self._remotes.add(f)           # register this remote
+        try:
+          for line in f:
+            with self._lock:
+              before = (self.tv.is_on, self.tv.channel)
+              reply = self.tv.handle_command(line)
+              after = (self.tv.is_on, self.tv.channel)
+              f.write(reply + "\n")
+              f.flush()
+              self._notify_others(f, before, after)
+            print(f"  {addr}: {line.strip()!r} -> {reply!r}")
+        finally:
+          with self._lock:
+            self._remotes.discard(f)   # unregister on disconnect
     except (ConnectionResetError, BrokenPipeError):
       pass
-    print("Remote disconnected")
+    print(f"Remote {addr} disconnected")
 
+    def _notify_others(self, sender, before, after):
+      events = []
+      if before[0] != after[0]:
+        events.append("EVENT POWER " + ("ON" if after[0] else "OFF"))
+      if before[1] != after[1]:
+        events.append(f"EVENT CHANNEL {after[1]}")
+
+      for event in events:
+        for remote in list(self._remotes):
+          if remote is sender:
+            continue
+          try:
+            remote.write(event + "\n")
+            remote.flush()
+          except (OSError, ValueError):
+            pass   # that remote is gone; its own thread cleans up
+
+
+def show_event(message):
+  print(f"\n[TV update] {message}")
+  print("remote> ", end="", flush=True)
 
 def main():
   port = DEFAULT_PORT

@@ -67,7 +67,7 @@ class SmartTV:
 
     if cmd == "SET":
       self.set_channel(int(args[0]))
-      return f"OK {self.channel}"
+      return f"Set channel to channel number {self.channel}"
 
     if cmd == "DOWN":
       self.channel_down()
